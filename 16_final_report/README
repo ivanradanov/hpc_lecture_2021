@@ -1,0 +1,14 @@
+to compile first load modules as such:
+$ module purge
+$ module load intel-mpi cuda
+
+then compile with:
+
+$ ./compile.sh
+
+then run with:
+
+$ mpiexec -np 2 ./a.out
+
+
+
