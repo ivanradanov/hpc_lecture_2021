@@ -3,6 +3,15 @@
 #include <cmath>
 #include <vector>
 #include <chrono>
+#include <iostream>
+#include <fstream>
+#include <stdlib.h>
+
+#include <cuda.h>
+#include <cuda_runtime.h>
+
+#include "matmul.hpp"
+
 using namespace std;
 
 int main(int argc, char** argv) {
@@ -11,20 +20,49 @@ int main(int argc, char** argv) {
   MPI_Comm_size(MPI_COMM_WORLD, &size);
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
-  const int N = 256;
+  ofstream nullfile("/dev/null");
+  if (rank !=0) {
+	  cout.rdbuf(nullfile.rdbuf());
+  }
+
+  const int N = (1 << 10);
   vector<float> A(N*N);
   vector<float> B(N*N);
   vector<float> C(N*N, 0);
   vector<float> subA(N*N/size);
   vector<float> subB(N*N/size);
   vector<float> subC(N*N/size, 0);
+  vector<float> hsubC(N*N/(size*size), 0);
   vector<float> recv(N*N/size);
+
+
+  float *dsubA, *dsubB, *dsubC;
+  checkError(cudaMalloc(&dsubA, sizeof(float) * N*N/size));
+  checkError(cudaMalloc(&dsubB, sizeof(float) * N*N/size));
+  checkError(cudaMalloc(&dsubC, sizeof(float) * N*N/(size*size)));
+  //cudaStream_t stream;
+  //checkError(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
+
   for (int i=0; i<N; i++) {
     for (int j=0; j<N; j++) {
       A[N*i+j] = drand48();
       B[N*i+j] = drand48();
     }
   }
+
+  // TODO
+  int l = 0;
+  A[l++] = 1;
+  A[l++] = 2;
+  A[l++] = 3;
+  A[l++] = 4;
+  l = 0;
+  B[l++] = 5;
+  B[l++] = 6;
+  B[l++] = 7;
+  B[l++] = 8;
+
+
   int offset = N/size*rank;
   for (int i=0; i<N/size; i++)
     for (int j=0; j<N; j++)
@@ -35,15 +73,51 @@ int main(int argc, char** argv) {
   int recv_from = (rank + 1) % size;
   int send_to = (rank - 1 + size) % size;
 
+  dim3 block(BLOCK_SIZE, BLOCK_SIZE);
+  // TODO
+  dim3 grid((N / size) / BLOCK_SIZE, (N / size) / BLOCK_SIZE);
+
   double comp_time = 0, comm_time = 0;
   for(int irank=0; irank<size; irank++) {
     auto tic = chrono::steady_clock::now();
+
+    /*
+    cout << "A and B" << endl;
+    for (int i = 0; i < N; i++)
+      for (int j = 0; j < N / size; j++)
+	      cout << subA[N * j + i] << "\t" << subB[N /size * i + j] << endl;
+    cout << endl;
+    */
+
+    checkError(cudaMemcpy(dsubA, &subA[0], sizeof(float) * N * N / size, cudaMemcpyHostToDevice));
+    checkError(cudaMemcpy(dsubB, &subB[0], sizeof(float) * N * N / size, cudaMemcpyHostToDevice));
+
+    // TODO
+    h_mat_mul(grid, block, dsubA, dsubB, dsubC, N, N / size);
+
+    checkError(cudaMemcpy(&hsubC[0], dsubC, sizeof(float) * N * N / (size * size), cudaMemcpyDeviceToHost));
+
     offset = N/size*((rank+irank) % size);
+    for (int i = 0; i < N / size; i++)
+	    for (int j = 0; j < N / size; j++)
+		    subC[N * i + j + offset] += hsubC[N / size * i + j];
+
+    /*
+    cout << "check" << endl;
     for (int i=0; i<N/size; i++)
-      for (int j=0; j<N/size; j++)
-        for (int k=0; k<N; k++)
-          subC[N*i+j+offset] += subA[N*i+k] * subB[N/size*k+j];
+	    for (int j=0; j<N/size; j++) {
+		    float tmp = 0;
+		    //subC[N*i+j+offset] = 0;
+		    for (int k=0; k<N; k++) {
+	        tmp += subA[N*i+k] * subB[N/size*k+j];
+	        subC[N*i+j+offset] += subA[N*i+k] * subB[N/size*k+j];
+        }
+        cout << tmp << "\t" << hsubC[N / size * i + j] << "\t" << subC[N * i + j + offset] << endl;
+	    }
+    */
+
     auto toc = chrono::steady_clock::now();
+
     comp_time += chrono::duration<double>(toc - tic).count();
     MPI_Request request[2];
     MPI_Isend(&subB[0], N*N/size, MPI_FLOAT, send_to, 0, MPI_COMM_WORLD, &request[0]);
