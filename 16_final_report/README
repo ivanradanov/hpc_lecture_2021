@@ -1,14 +1,25 @@
-to compile first load modules as such:
+Remarks:
+
+N is set to 1024 currently.
+
+Let K be the number of mpi processes.
+Due to how the CUDA grid is set up, N / K must be a whole number and a multiple of 256
+This means that with the current N = 1024, the MPI processes must be either 1, 2, or 4.
+
+
+
+To compile first load modules as such:
+
 $ module purge
 $ module load intel-mpi cuda
 
-then compile with:
+Then compile with:
 
 $ ./compile.sh
 
-then run with:
+Then run with (for example):
 
-$ mpiexec -np 2 ./a.out
+$ mpiexec -np 4 ./a.out
 
 
 
